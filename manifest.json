@@ -7,7 +7,7 @@
   "css": "style.css",
   "author": "dreammysticrealm + ChatGPT",
   "version": "1.0.0",
-  "homePage": "https://github.com/YOUR_USERNAME/ST-HiddenFloorCollapse",
+  "homePage": "https://github.com/dreammysticrealm/ST-HiddenFloorCollapse",
   "hooks": {
     "activate": "init"
   }
