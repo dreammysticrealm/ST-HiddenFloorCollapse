@@ -759,3 +759,5 @@ export function init() {
 
     console.info('[Hidden Floor Collapse] loaded');
 }
+
+init();
