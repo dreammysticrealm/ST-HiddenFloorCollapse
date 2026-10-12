@@ -7,7 +7,8 @@
 /* Hidden / expanded messages                                                */
 /* ------------------------------------------------------------------------- */
 
-#chat > .mes.st-hfc-collapsed-message {
+#chat > .mes.st-hfc-collapsed-message,
+#chat > .mes.st-hfc-virtual-message {
     display: none !important;
 }
 
@@ -543,6 +544,10 @@
 
     white-space:
         nowrap;
+}
+
+#chat > details.st-hfc-details[aria-busy="true"] .st-hfc-hint {
+    color: var(--st-hfc-accent);
 }
 
 

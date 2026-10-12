@@ -2,7 +2,7 @@
 // Groups consecutive hidden (is_system="true") chat messages into a details-like fold.
 // Supports per-chat persistent notes for each hidden sequence.
 
-import { eventSource, event_types } from '/script.js';
+import * as Tavern from '/script.js';
 import { SlashCommand } from '/scripts/slash-commands/SlashCommand.js';
 import { SlashCommandParser } from '/scripts/slash-commands/SlashCommandParser.js';
 
@@ -12,6 +12,9 @@ const CHAT_SELECTOR = '#chat';
 const DETAILS_CLASS = 'st-hfc-details';
 const GROUPED_CLASS = 'st-hfc-grouped-message';
 const COLLAPSED_CLASS = 'st-hfc-collapsed-message';
+const VIRTUAL_CLASS = 'st-hfc-virtual-message';
+const { eventSource, event_types } = Tavern;
+const RENDER_BATCH_SIZE = 8;
 
 // Stored inside the current chat's metadata.
 const METADATA_KEY = 'hidden_floor_collapse';
@@ -21,6 +24,19 @@ let observer = null;
 let observedChat = null;
 let scheduled = false;
 let initialized = false;
+let discoveryObserver = null;
+let parentObserver = null;
+let session = null;
+let sessionNumber = 0;
+let retryTimer = null;
+let retryCount = 0;
+let restoreFrame = null;
+let restoredSinceNotify = false;
+let openKeys = new Set();
+const cards = new Map();
+const virtualMessages = new Map();
+const restoreQueue = new Map();
+const failedRestores = new Set();
 
 
 /* ------------------------------------------------------------------------- */
@@ -39,7 +55,8 @@ function isOurDetails(node) {
 function isCollapsibleHiddenMessage(node) {
     if (!(node instanceof HTMLElement)) return false;
     if (!node.classList.contains('mes')) return false;
-    if (node.getAttribute('is_system') !== 'true') return false;
+    const message = getChatMessage(node);
+    if (message ? !isCollapsibleData(message) : node.getAttribute('is_system') !== 'true') return false;
 
     // Leave SillyTavern's own small system/tool blocks alone.
     if (node.classList.contains('smallSysMes')) return false;
@@ -49,11 +66,19 @@ function isCollapsibleHiddenMessage(node) {
     return true;
 }
 
+function isCollapsibleData(message) {
+    return message?.is_system === true
+        && message.extra?.isSmallSys !== true
+        && !Array.isArray(message.extra?.tool_invocations)
+        && message.extra?.type !== 'system';
+}
+
 function getMessageId(messageElement) {
     const raw = messageElement.getAttribute('mesid');
+    if (raw === null || raw.trim() === '') return null;
     const number = Number(raw);
 
-    return Number.isFinite(number) ? number : null;
+    return Number.isInteger(number) && number >= 0 ? number : null;
 }
 
 function getMessageName(messageElement) {
@@ -63,13 +88,15 @@ function getMessageName(messageElement) {
         ?.textContent
         ?.trim();
 
-    return nameFromDom || nameFromAttr || 'Unknown';
+    return getChatMessage(messageElement)?.name || nameFromDom || nameFromAttr || 'Unknown';
 }
 
 function getMessagePreview(messageElement) {
-    const text = messageElement.querySelector('.mes_text')?.textContent || '';
+    const message = getChatMessage(messageElement);
+    const text = message?.extra?.display_text ?? message?.mes
+        ?? messageElement.querySelector('.mes_text')?.textContent ?? '';
 
-    return text
+    return String(text)
         .replace(/\s+/g, ' ')
         .trim();
 }
@@ -202,7 +229,26 @@ function getGroupKey(group) {
         return null;
     }
 
-    return getMessageAnchor(group[0]);
+    // Anchor notes/open state to the start of the hidden run in chat DATA.
+    // Only the loaded portion is ever rendered. Loading an older part of the
+    // same run must not move the note to a different key.
+    const { chat } = SillyTavern.getContext();
+    let firstId = getMessageId(group[0]);
+    if (firstId === null) return null;
+    while (firstId > 0 && isCollapsibleData(chat[firstId - 1])) firstId--;
+    const date = chat[firstId]?.send_date;
+    const canonical = date !== undefined && date !== null && String(date).trim()
+        ? `date:${String(date)}` : `mesid:${firstId}`;
+    const notes = getMetadataState().notes;
+    if (Object.hasOwn(notes, canonical)) return canonical;
+    // Preserve notes made by 1.0.x on a partially loaded group.
+    for (let id = firstId; id <= getMessageId(group[group.length - 1]); id++) {
+        const legacyDate = chat[id]?.send_date;
+        const key = legacyDate !== undefined && legacyDate !== null && String(legacyDate).trim()
+            ? `date:${String(legacyDate)}` : `mesid:${id}`;
+        if (Object.hasOwn(notes, key)) return key;
+    }
+    return canonical;
 }
 
 function getGroupNote(group) {
@@ -319,8 +365,8 @@ async function editGroupNote(group) {
 /* Note UI                                                                   */
 /* ------------------------------------------------------------------------- */
 
-function createNoteElement(group) {
-    const noteText = getGroupNote(group);
+function createNoteElement(getGroup) {
+    const noteText = getGroupNote(getGroup());
 
     const note = document.createElement('span');
     note.className = 'st-hfc-note';
@@ -359,7 +405,7 @@ function createNoteElement(group) {
         event.preventDefault();
         event.stopPropagation();
 
-        void editGroupNote(group);
+        void editGroupNote(getGroup());
     });
 
     note.addEventListener('keydown', (event) => {
@@ -381,392 +427,461 @@ function createNoteElement(group) {
 /* Fold card creation                                                        */
 /* ------------------------------------------------------------------------- */
 
-function createDetailsForGroup(group, initiallyOpen = false) {
+function createDetailsForGroup(group, key) {
     const details = document.createElement('details');
     details.className = DETAILS_CLASS;
-
-    details.dataset.count = String(group.length);
-    details.dataset.range = summarizeRange(group);
-
-    const groupKey = getGroupKey(group);
-
-    if (groupKey) {
-        details.dataset.groupKey = groupKey;
-    }
-
-    if (initiallyOpen) {
-        details.open = true;
-    }
-
-    const summary = document.createElement('summary');
-    summary.className = 'st-hfc-summary';
-
-    // Keep <summary> as the native disclosure control and put Grid on a child
-    // to avoid older iOS WebKit layout quirks.
-    const layout = document.createElement('span');
-    layout.className = 'st-hfc-summary-layout';
-
-    const kicker = document.createElement('span');
-    kicker.className = 'st-hfc-kicker';
-    kicker.textContent = 'Hidden sequence';
-
-    const title = document.createElement('span');
-    title.className = 'st-hfc-title';
-    title.textContent = `已隐藏${group.length}层`;
-
-    const range = document.createElement('span');
-    range.className = 'st-hfc-range';
-    range.textContent = summarizeRange(group);
-
-    const names = document.createElement('span');
-    names.className = 'st-hfc-names';
-    names.textContent = summarizeNames(group);
-
-    const note = createNoteElement(group);
-
-    const preview = document.createElement('span');
-    preview.className = 'st-hfc-preview';
-
-    const firstPreview = getMessagePreview(group[0]);
-
-    preview.textContent = firstPreview
-        ? `“${firstPreview.slice(0, 88)}${firstPreview.length > 88 ? '…' : ''}”`
-        : '点击展开查看隐藏楼层';
-
-    const hint = document.createElement('span');
-    hint.className = 'st-hfc-hint';
-    hint.textContent = initiallyOpen
-        ? '点击以折叠'
-        : '点击以展开';
-
-    layout.append(
-        kicker,
-        title,
-        range,
-        names,
-        note,
-        preview,
-        hint,
-    );
-
-    summary.append(layout);
-    details.append(summary);
-
+    details.dataset.groupKey = key;
+    const state = { details, group, key, signature: '', expectedOpen: openKeys.has(key) };
+    details.open = state.expectedOpen;
     details.addEventListener('toggle', () => {
-        syncGroupVisibility(details, group);
+        if (!details.isConnected || cards.get(key) !== state || details.open === state.expectedOpen) return;
+        if (!details.open && groupHasEditor(state.group)) {
+            details.open = true;
+            showToast('info', '请先保存或取消楼层编辑，再收起这一组。');
+            return;
+        }
+        state.expectedOpen = details.open;
+        if (details.open) {
+            openKeys.add(key);
+            state.group.forEach(node => failedRestores.delete(node));
+        } else {
+            openKeys.delete(key);
+            state.group.forEach(node => restoreQueue.delete(node));
+        }
+        scheduleApply('toggle');
     });
-
-    return details;
+    return state;
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Fold state                                                                */
-/* ------------------------------------------------------------------------- */
-
-function syncGroupVisibility(details, group) {
-    const collapsed = !details.open;
-
+function updateCard(state, group) {
+    state.group = group;
+    const { details } = state;
+    const rangeText = summarizeRange(group);
+    const namesText = summarizeNames(group);
+    const previewText = getMessagePreview(group[0]);
+    const noteText = getGroupNote(group);
+    const signature = JSON.stringify([group.length, rangeText, namesText, previewText.slice(0, 89), noteText]);
+    if (signature !== state.signature) {
+        const summary = document.createElement('summary');
+        summary.className = 'st-hfc-summary';
+        const layout = document.createElement('span');
+        layout.className = 'st-hfc-summary-layout';
+        const add = (className, text) => {
+            const span = document.createElement('span');
+            span.className = className;
+            span.textContent = text;
+            layout.append(span);
+            return span;
+        };
+        add('st-hfc-kicker', 'Hidden sequence');
+        add('st-hfc-title', `已隐藏${group.length}层`);
+        add('st-hfc-range', rangeText);
+        add('st-hfc-names', namesText);
+        // Resolve the current nodes when clicked, after an expansion replaces
+        // placeholders with freshly rendered messages.
+        const note = createNoteElement(() => state.group);
+        layout.append(note);
+        add('st-hfc-preview', previewText
+            ? `“${previewText.slice(0, 88)}${previewText.length > 88 ? '…' : ''}”`
+            : '点击展开查看隐藏楼层');
+        add('st-hfc-hint', '点击以展开');
+        summary.append(layout);
+        details.replaceChildren(summary);
+        state.signature = signature;
+    }
+    details.dataset.count = String(group.length);
+    details.dataset.range = rangeText;
+    state.expectedOpen = openKeys.has(state.key);
+    details.open = state.expectedOpen;
     details.classList.toggle('is-open', details.open);
+    updateCardProgress(state);
+}
 
-    const hint = details.querySelector('.st-hfc-hint');
-
+function updateCardProgress(state) {
+    const pending = state.group.filter(node => virtualMessages.has(node)).length;
+    const failed = state.group.some(node => failedRestores.has(node));
+    const busy = state.details.open && pending > 0 && !failed;
+    state.details.setAttribute('aria-busy', String(busy));
+    const hint = state.details.querySelector('.st-hfc-hint');
     if (hint) {
-        hint.textContent = details.open
-            ? '点击以折叠'
-            : '点击以展开';
-    }
-
-    for (const message of group) {
-        message.classList.add(GROUPED_CLASS);
-        message.classList.toggle(COLLAPSED_CLASS, collapsed);
+        hint.textContent = !state.details.open ? '点击以展开'
+            : failed ? '收起后重试'
+                : busy ? `展开中 ${state.group.length - pending}/${state.group.length}`
+                    : '点击以折叠';
+        hint.title = failed ? '部分楼层未能恢复；可收起后重试，或使用 /hfc-refresh。' : '';
     }
 }
 
-/**
- * Remember which cards are currently open before rebuilding the DOM.
- *
- * This is especially useful after editing a note: editing an open card should
- * not unexpectedly collapse it.
- */
-function collectOpenGroupKeys(chat) {
-    const openKeys = new Set();
-
-    chat
-        .querySelectorAll(`:scope > details.${DETAILS_CLASS}[open]`)
-        .forEach((details) => {
-            if (!(details instanceof HTMLDetailsElement)) {
-                return;
-            }
-
-            const key = details.dataset.groupKey;
-
-            if (key) {
-                openKeys.add(key);
-            }
-        });
-
-    return openKeys;
+function groupHasEditor(group) {
+    return group.some(node => node.querySelector('.edit_textarea, .reasoning_edit_textarea'));
 }
 
+function getSessionId(context) {
+    return JSON.stringify([context.characterId, context.groupId, context.chatId]);
+}
 
-/* ------------------------------------------------------------------------- */
-/* Cleanup / grouping                                                        */
-/* ------------------------------------------------------------------------- */
+function sessionIsCurrent() {
+    const context = SillyTavern.getContext();
+    return session && session.element === getChatElement()
+        && session.metadata === context.chatMetadata
+        && session.messages === context.chat
+        && session.id === getSessionId(context);
+}
 
-function cleanupExistingFolds(chat) {
-    chat
-        .querySelectorAll(`:scope > .${DETAILS_CLASS}`)
-        .forEach((node) => node.remove());
+function resetSession(chat, context) {
+    sessionNumber++;
+    if (restoreFrame !== null) cancelAnimationFrame(restoreFrame);
+    restoreFrame = null;
+    restoreQueue.clear();
+    restoredSinceNotify = false;
+    virtualMessages.clear();
+    failedRestores.clear();
+    openKeys = new Set();
+    for (const state of cards.values()) state.details.remove();
+    cards.clear();
+    session = { element: chat, metadata: context.chatMetadata, messages: context.chat, id: getSessionId(context) };
+}
 
-    chat
-        .querySelectorAll(
-            `:scope > .mes.${GROUPED_CLASS}, :scope > .mes.${COLLAPSED_CLASS}`,
-        )
-        .forEach((node) => {
-            node.classList.remove(
-                GROUPED_CLASS,
-                COLLAPSED_CLASS,
-            );
+const observerOptions = {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ['is_system', 'mesid'],
+};
+
+function mutateDom(callback) {
+    // Preserve external mutations already queued before temporarily pausing
+    // observation. Our own empty/replace operations must not cause a loop.
+    const pending = observer?.takeRecords() || [];
+    if (pending.length) handleMutations(pending);
+    observer?.disconnect();
+    try {
+        return callback();
+    } finally {
+        if (observer && observedChat) observer.observe(observedChat, observerOptions);
+    }
+}
+
+function canRebuildMessages(context) {
+    return typeof Tavern.updateMessageElement === 'function'
+        || typeof context.addOneMessage === 'function';
+}
+
+function makeVirtual(node, message) {
+    // Keep ONE empty .mes per loaded message. SillyTavern 1.14–1.19 uses their
+    // contiguous order for reindexing, swipes, deletion, and Show more messages.
+    // Keep neither a detached DOM cache nor copies of message content.
+    if (node.firstChild) {
+        if (globalThis.jQuery) globalThis.jQuery(node).empty();
+        else node.replaceChildren();
+    }
+    node.classList.add(VIRTUAL_CLASS);
+    virtualMessages.set(node, message);
+}
+
+function fixLastMessageClass(chat) {
+    const messages = chat.querySelectorAll(':scope > .mes');
+    for (const node of messages) node.classList.remove('last_mes');
+    messages[messages.length - 1]?.classList.add('last_mes');
+}
+
+function restoreMessage(node, message, id) {
+    const chat = session.element;
+    const selected = node.classList.contains('selected');
+    let rendered;
+    if (typeof Tavern.updateMessageElement === 'function') {
+        const result = Tavern.updateMessageElement(message, { messageId: id });
+        rendered = result instanceof HTMLElement ? result : result?.[0];
+        if (!(rendered instanceof HTMLElement) || !rendered.classList.contains('mes')) {
+            throw new Error('The native renderer did not return a message element.');
+        }
+        node.before(rendered);
+        if (globalThis.jQuery) globalThis.jQuery(node).remove();
+        else node.remove();
+    } else {
+        // 1.14/1.15 addOneMessage returns nothing and looks up the inserted
+        // message by mesid. Remove the placeholder first so that lookup is
+        // unambiguous, then move the new message back to its exact position.
+        const marker = document.createComment('hfc-restore');
+        node.replaceWith(marker);
+        try {
+            SillyTavern.getContext().addOneMessage(message, { forceId: id, scroll: false, showSwipes: false });
+            rendered = chat.querySelector(`:scope > .mes[mesid="${id}"]`);
+            if (!(rendered instanceof HTMLElement)) throw new Error('The native renderer did not insert a message element.');
+            marker.replaceWith(rendered);
+        } catch (error) {
+            chat.querySelector(`:scope > .mes[mesid="${id}"]`)?.remove();
+            marker.replaceWith(node);
+            throw error;
+        }
+    }
+    if (selected) rendered.classList.add('selected');
+    virtualMessages.delete(node);
+    failedRestores.delete(node);
+    restoredSinceNotify = true;
+    return rendered;
+}
+
+function queueRestore(node, message) {
+    if (!failedRestores.has(node)) restoreQueue.set(node, { message, sessionNumber });
+}
+
+function pumpRestores() {
+    if (restoreFrame !== null || !restoreQueue.size) return;
+    restoreFrame = requestAnimationFrame(() => {
+        restoreFrame = null;
+        if (!sessionIsCurrent()) {
+            scheduleApply('restore-chat-changed');
+            return;
+        }
+        if (document.body.dataset.generating === 'true') return;
+        const started = performance.now();
+        let completed = 0;
+        mutateDom(() => {
+            for (const [node, job] of restoreQueue) {
+                restoreQueue.delete(node);
+                const id = getMessageId(node);
+                if (job.sessionNumber !== sessionNumber || node.parentElement !== session.element
+                    || session.messages[id] !== job.message || !virtualMessages.has(node)) continue;
+                try {
+                    restoreMessage(node, job.message, id);
+                } catch (error) {
+                    failedRestores.add(node);
+                    console.error(`[${MODULE_NAME}] Could not restore message #${id}:`, error);
+                    showToast('error', `楼层 #${id} 展开失败，可收起后重试。`);
+                }
+                completed++;
+                if (completed >= RENDER_BATCH_SIZE || performance.now() - started >= 8) break;
+            }
+            fixLastMessageClass(session.element);
         });
+        // Reconcile before the next batch: closing, deletion, reindexing, and
+        // chat switches may have invalidated queued nodes since the last frame.
+        scheduleApply('restore-batch');
+    });
 }
 
 function findHiddenGroups(chat) {
     const groups = [];
     let current = [];
-
-    for (const child of Array.from(chat.children)) {
-        if (isOurDetails(child)) {
-            continue;
-        }
-
-        if (isCollapsibleHiddenMessage(child)) {
-            current.push(child);
-            continue;
-        }
-
-        if (current.length) {
+    for (const node of Array.from(chat.children)) {
+        if (isOurDetails(node)) continue;
+        const id = node instanceof HTMLElement ? getMessageId(node) : null;
+        const message = id === null ? null : session.messages[id];
+        if (message && isCollapsibleHiddenMessage(node)) {
+            if (current.length && id !== getMessageId(current[current.length - 1]) + 1) {
+                groups.push(current);
+                current = [];
+            }
+            current.push(node);
+        } else if (current.length) {
             groups.push(current);
             current = [];
         }
     }
-
-    if (current.length) {
-        groups.push(current);
-    }
-
+    if (current.length) groups.push(current);
     return groups;
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Main renderer                                                             */
-/* ------------------------------------------------------------------------- */
+function retryWhenReady() {
+    if (retryTimer || retryCount >= 50) return;
+    retryCount++;
+    retryTimer = setTimeout(() => {
+        retryTimer = null;
+        scheduleApply('context-ready-retry');
+    }, 100);
+}
 
 function applyHiddenFloorCollapse() {
     setupMutationObserver();
     const chat = getChatElement();
-
-    if (!chat) {
+    const context = globalThis.SillyTavern?.getContext?.();
+    if (!chat || !Array.isArray(context?.chat) || !context.chatMetadata) {
+        retryWhenReady();
         return;
     }
-
-    // Preserve manually opened cards while rebuilding.
-    const openGroupKeys = collectOpenGroupKeys(chat);
-
-    cleanupExistingFolds(chat);
-
-    const groups = findHiddenGroups(chat);
-
-    for (const group of groups) {
-        const key = getGroupKey(group);
-        const initiallyOpen = key
-            ? openGroupKeys.has(key)
-            : false;
-
-        const details = createDetailsForGroup(
-            group,
-            initiallyOpen,
-        );
-
-        group[0].before(details);
-
-        syncGroupVisibility(details, group);
+    if (!sessionIsCurrent()) resetSession(chat, context);
+    if (document.body.dataset.generating === 'true') return;
+    const nodes = Array.from(chat.children).filter(node => node.classList.contains('mes'));
+    if (nodes.some(node => !context.chat[getMessageId(node)])) {
+        // Some ST versions fill chat data after inserting the initial DOM.
+        retryWhenReady();
+        return;
+    }
+    retryCount = 0;
+    restoreQueue.clear();
+    const live = new Set(nodes);
+    for (const node of virtualMessages.keys()) {
+        if (!live.has(node)) {
+            virtualMessages.delete(node);
+            failedRestores.delete(node);
+        }
+    }
+    mutateDom(() => {
+        for (const node of nodes) {
+            node.classList.remove(GROUPED_CLASS, COLLAPSED_CLASS);
+            // Metadata or chat-array replacement can start a new session
+            // while the existing loaded DOM is retained.
+            if (node.classList.contains(VIRTUAL_CLASS)) {
+                virtualMessages.set(node, context.chat[getMessageId(node)]);
+            }
+            if (virtualMessages.has(node)) {
+                const id = getMessageId(node);
+                const message = context.chat[id];
+                virtualMessages.set(node, message);
+                // Retain the newest message's full native structure even when
+                // hidden: generation/continue/swipe code can target it directly.
+                if (id === context.chat.length - 1) {
+                    try { restoreMessage(node, message, id); }
+                    catch (error) { failedRestores.add(node); console.error(`[${MODULE_NAME}]`, error); }
+                } else if (!isCollapsibleHiddenMessage(node)) queueRestore(node, message);
+            }
+        }
+        const groups = findHiddenGroups(chat);
+        const usedKeys = new Set();
+        const canVirtualize = canRebuildMessages(context);
+        for (const group of groups) {
+            const key = getGroupKey(group);
+            if (!key) continue;
+            usedKeys.add(key);
+            if (groupHasEditor(group)) openKeys.add(key);
+            let state = cards.get(key);
+            if (!state) {
+                state = createDetailsForGroup(group, key);
+                cards.set(key, state);
+            }
+            const isOpen = openKeys.has(key);
+            for (const node of group) {
+                const id = getMessageId(node);
+                node.classList.add(GROUPED_CLASS);
+                node.classList.toggle(COLLAPSED_CLASS, !isOpen);
+                if (isOpen) {
+                    if (virtualMessages.has(node)) queueRestore(node, context.chat[id]);
+                } else if (canVirtualize && id !== context.chat.length - 1) {
+                    makeVirtual(node, context.chat[id]);
+                }
+            }
+            updateCard(state, group);
+            if (state.details.nextElementSibling !== group[0]) group[0].before(state.details);
+        }
+        for (const [key, state] of cards) {
+            if (!usedKeys.has(key)) {
+                state.details.remove();
+                cards.delete(key);
+                openKeys.delete(key);
+            }
+        }
+        fixLastMessageClass(chat);
+    });
+    pumpRestores();
+    if (!restoreQueue.size && restoredSinceNotify) {
+        restoredSinceNotify = false;
+        // The same notification ST sends after loading existing history lets
+        // other extensions reapply their DOM enhancements to restored content.
+        if (event_types.MORE_MESSAGES_LOADED) {
+            Promise.resolve(eventSource.emit(event_types.MORE_MESSAGES_LOADED))
+                .catch(error => console.error(`[${MODULE_NAME}] History render listener failed:`, error));
+        }
     }
 }
 
 function scheduleApply(reason = 'unknown') {
-    if (scheduled) {
-        return;
-    }
-
+    if (scheduled) return;
     scheduled = true;
-
     requestAnimationFrame(() => {
         scheduled = false;
-
-        try {
-            applyHiddenFloorCollapse();
-        } catch (error) {
-            console.error(
-                `[${MODULE_NAME}] Failed to apply folds after ${reason}:`,
-                error,
-            );
+        try { applyHiddenFloorCollapse(); }
+        catch (error) {
+            console.error(`[${MODULE_NAME}] Failed to apply folds after ${reason}:`, error);
         }
     });
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Mutation observer                                                         */
-/* ------------------------------------------------------------------------- */
+function handleMutations(mutations) {
+    const relevant = mutations.some(mutation => {
+        if (mutation.type === 'attributes') return mutation.target.classList?.contains('mes');
+        if (mutation.target === observedChat) {
+            return [...mutation.addedNodes, ...mutation.removedNodes]
+                .some(node => node instanceof Element && !isOurDetails(node));
+        }
+        // If another extension writes content into an empty placeholder, empty
+        // it again while closed, or rebuild it from current data while open.
+        return virtualMessages.has(mutation.target);
+    });
+    if (relevant) scheduleApply('chat-dom-changed');
+}
 
 function setupMutationObserver() {
     const chat = getChatElement();
-
-    if (!chat || observedChat === chat) {
+    if (observedChat === chat && observer) return;
+    observer?.disconnect();
+    parentObserver?.disconnect();
+    observedChat = chat;
+    if (!chat) {
+        if (!discoveryObserver) {
+            discoveryObserver = new MutationObserver(() => {
+                if (getChatElement()) scheduleApply('chat-created');
+            });
+            discoveryObserver.observe(document.documentElement, { childList: true, subtree: true });
+        }
         return;
     }
-
-    observer?.disconnect();
-
-    observer = new MutationObserver((mutations) => {
-        // Never rebuild folds while SillyTavern is generating.
-        if (document.body.dataset.generating === 'true') {
-            return;
-        }
-
-        const relevant = mutations.some((mutation) => {
-            if (mutation.type === 'childList') {
-                // Mobile clients may populate #chat after the load event.
-                // Ignore only our own card insertions/removals, so an
-                // overlapping SillyTavern update is never discarded.
-                return mutation.target === chat
-                    && [...mutation.addedNodes, ...mutation.removedNodes]
-                        .some((node) => node instanceof Element && !isOurDetails(node));
-            }
-
-            return mutation.type === 'attributes'
-                && mutation.attributeName === 'is_system'
-                && mutation.target instanceof HTMLElement
-                && mutation.target.classList.contains('mes');
-        });
-
-        if (relevant) {
-            scheduleApply('chat-dom-changed');
-        }
+    discoveryObserver?.disconnect();
+    discoveryObserver = null;
+    observer = new MutationObserver(handleMutations);
+    observer.observe(chat, observerOptions);
+    parentObserver = new MutationObserver(() => {
+        if (getChatElement() !== observedChat) scheduleApply('chat-replaced');
     });
-
-    observer.observe(chat, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['is_system'],
-    });
-
-    observedChat = chat;
+    if (chat.parentElement) parentObserver.observe(chat.parentElement, { childList: true });
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Commands                                                                  */
-/* ------------------------------------------------------------------------- */
-
 function openAllFolds() {
-    document
-        .querySelectorAll(`${CHAT_SELECTOR} > .${DETAILS_CLASS}`)
-        .forEach((details) => {
-            if (details instanceof HTMLDetailsElement) {
-                details.open = true;
-            }
-        });
+    // Scope stays limited to ST's loaded window, even if earlier hidden
+    // messages exist in chat data. Never call showMoreMessages implicitly.
+    applyHiddenFloorCollapse();
+    for (const key of cards.keys()) openKeys.add(key);
+    failedRestores.clear();
+    scheduleApply('open-all');
 }
 
 function closeAllFolds() {
-    document
-        .querySelectorAll(`${CHAT_SELECTOR} > .${DETAILS_CLASS}`)
-        .forEach((details) => {
-            if (details instanceof HTMLDetailsElement) {
-                details.open = false;
-            }
-        });
+    applyHiddenFloorCollapse();
+    for (const [key, state] of cards) {
+        if (!groupHasEditor(state.group)) openKeys.delete(key);
+    }
+    restoreQueue.clear();
+    scheduleApply('close-all');
 }
 
 function registerSlashCommands() {
-    SlashCommandParser.addCommandObject(
-        SlashCommand.fromProps({
-            name: 'hfc-refresh',
-            aliases: ['hidden-fold-refresh'],
-            callback: () => {
-                scheduleApply('slash-refresh');
-                return 'true';
-            },
-            helpString: 'Rebuild hidden-message fold groups.',
-        }),
-    );
-
-    SlashCommandParser.addCommandObject(
-        SlashCommand.fromProps({
-            name: 'hfc-open',
-            aliases: ['hidden-fold-open'],
-            callback: () => {
-                openAllFolds();
-                return 'true';
-            },
-            helpString: 'Open all hidden-message fold groups.',
-        }),
-    );
-
-    SlashCommandParser.addCommandObject(
-        SlashCommand.fromProps({
-            name: 'hfc-close',
-            aliases: ['hidden-fold-close'],
-            callback: () => {
-                closeAllFolds();
-                return 'true';
-            },
-            helpString: 'Close all hidden-message fold groups.',
-        }),
-    );
+    for (const [name, alias, callback, helpString] of [
+        ['hfc-refresh', 'hidden-fold-refresh', () => { failedRestores.clear(); scheduleApply('slash-refresh'); }, 'Rebuild hidden-message fold groups in the loaded chat window.'],
+        ['hfc-open', 'hidden-fold-open', openAllFolds, 'Open loaded hidden-message fold groups.'],
+        ['hfc-close', 'hidden-fold-close', closeAllFolds, 'Close loaded hidden-message fold groups.'],
+    ]) {
+        SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+            name, aliases: [alias], callback: () => { callback(); return 'true'; }, helpString,
+        }));
+    }
 }
 
-
-/* ------------------------------------------------------------------------- */
-/* Initialization                                                            */
-/* ------------------------------------------------------------------------- */
-
 export function init() {
-    if (initialized) {
-        return;
-    }
-
+    if (initialized) return;
     initialized = true;
-
     setupMutationObserver();
     registerSlashCommands();
-
-    const refreshEvents = [
-        event_types.APP_READY,
-        event_types.CHAT_CHANGED,
-        event_types.CHAT_LOADED,
-        event_types.MORE_MESSAGES_LOADED,
-
-        // These are included when available in the installed ST version.
-        event_types.MESSAGE_DELETED,
-        event_types.MESSAGE_EDITED,
-        event_types.GENERATION_ENDED,
-        event_types.GENERATION_STOPPED,
-    ].filter(Boolean);
-
-    for (const eventName of refreshEvents) {
-        eventSource.on(
-            eventName,
-            () => scheduleApply(eventName),
-        );
-    }
-
+    const refreshEvents = new Set([
+        event_types.APP_READY, event_types.APP_INITIALIZED,
+        event_types.CHAT_CHANGED, event_types.CHAT_LOADED,
+        event_types.MORE_MESSAGES_LOADED, event_types.MESSAGE_DELETED,
+        event_types.MESSAGE_EDITED, event_types.MESSAGE_UPDATED,
+        event_types.MESSAGE_SENT, event_types.MESSAGE_RECEIVED,
+        event_types.MESSAGE_SWIPED, event_types.MESSAGE_SWIPE_DELETED,
+        event_types.USER_MESSAGE_RENDERED, event_types.CHARACTER_MESSAGE_RENDERED,
+        event_types.GENERATION_ENDED, event_types.GENERATION_STOPPED,
+        event_types.SETTINGS_UPDATED,
+    ].filter(Boolean));
+    for (const eventName of refreshEvents) eventSource.on(eventName, () => scheduleApply(eventName));
     scheduleApply('init');
-
     console.info('[Hidden Floor Collapse] loaded');
 }
 
