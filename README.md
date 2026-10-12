@@ -35,7 +35,7 @@
 * 手动加载更早的消息后，新加载的隐藏楼层自动合并进对应折叠组。
 * 改善首次进入聊天时的初始化，等待聊天容器和数据就绪后自动显示折叠组。
 * 切换聊天或重新收起时停止待执行的恢复；正在编辑的楼层会保持展开，保护未保存的内容。
-* 保留 1.0.4 的 iPhone 折叠卡片高度修复。
+* 修复 iPhone / iPad 折叠卡片高度的问题。
 
 ### 只加载 20 条消息时会怎样？
 
@@ -49,7 +49,7 @@
 
 ### 兼容性与性能
 
-面向 SillyTavern **1.14–1.19**：兼容旧版 `addOneMessage` 和新版 `updateMessageElement` 两种渲染接口。使用这六个版本的原生渲染、分页、重编号函数，在 Chromium 和 WebKit 测试页面中验证；这不等于对每个版本、每种第三方扩展组合的完整实机测试。
+面向 SillyTavern **1.14–1.19**：兼容旧版 `addOneMessage` 和新版 `updateMessageElement` 两种渲染接口。使用这六个版本的原生渲染、分页、重编号函数，在 Chromium 和 WebKit 测试页面中验证。
 
 为保持酒馆的楼层编号、删除和分页逻辑，每条收起的已加载消息保留一个空的 `.mes` 根节点，不缓存移出的正文 DOM。最新一条消息保留完整结构，供生成、续写和切换回复使用。酒馆首次创建消息 DOM 的开销仍然存在，优化的是收起后的 DOM 占用。
 
@@ -61,26 +61,26 @@
 * 你想让隐藏楼层不占据大量屏幕空间
 * 你仍然希望随时点开查看被隐藏的原文
 * 你希望连续隐藏楼层合并成一组，而不是每层单独折叠
-* 你想要一个类似HTML`<details>`的展开/折叠效果
+* 你想要一个类似 HTML `<details>` 的展开/折叠效果
 
-## 安装方式1：从GitHub安装
+## 安装方式1：从 GitHub 安装
 
 这是推荐安装方式。
 
-1. 打开SillyTavern。
-2. 点击顶部或侧边栏的Extensions。
-3. 找到Install Extension或Install from GitHub。
+1. 打开 SillyTavern。
+2. 点击顶部或侧边栏的 Extensions。
+3. 找到 Install Extension 或 Install from GitHub。
 4. 在输入框粘贴本仓库地址：
 
 ```text
 https://github.com/dreammysticrealm/ST-HiddenFloorCollapse
 ```
 
-5. 点击Install。
-6. 安装完成后刷新SillyTavern页面。
+5. 点击 Install。
+6. 安装完成后刷新 SillyTavern 页面。
 7. 打开任意聊天，如果有连续隐藏楼层，插件会自动把它们折叠成一组。
 
-如果你安装后没有看到效果，先确认聊天里确实有被Hide from prompt隐藏的消息，然后刷新页面或输入：
+如果你安装后没有看到效果，先确认聊天里确实有被 Hide from prompt 隐藏的消息，然后刷新页面或输入：
 
 ```stscript
 /hfc-refresh
@@ -88,7 +88,7 @@ https://github.com/dreammysticrealm/ST-HiddenFloorCollapse
 
 ## 安装方式2：手动安装
 
-如果Install from GitHub不可用，也可以手动安装。
+如果 Install from GitHub 不可用，也可以手动安装。
 
 1. 下载或克隆本仓库。
 2. 确认文件结构如下：
@@ -101,7 +101,7 @@ ST-HiddenFloorCollapse/
 └── README.md
 ```
 
-3. 把整个`ST-HiddenFloorCollapse`文件夹放进SillyTavern的第三方扩展目录。
+3. 把整个 `ST-HiddenFloorCollapse` 文件夹放进 SillyTavern 的第三方扩展目录。
 
 通常是：
 
@@ -115,14 +115,14 @@ SillyTavern/data/<你的用户>/extensions/ST-HiddenFloorCollapse
 SillyTavern/public/scripts/extensions/third-party/ST-HiddenFloorCollapse
 ```
 
-4. 重启SillyTavern或刷新浏览器页面。
+4. 重启 SillyTavern 或刷新浏览器页面。
 5. 插件会自动加载并开始工作。
 
 ## 使用方法
 
 安装后无需额外设置。插件会自动扫描聊天界面，把连续的隐藏消息合并成折叠块。
 
-隐藏消息通常来自SillyTavern的Hide from prompt/眼睛按钮，或等价的隐藏命令。只要消息在界面上带有隐藏状态，插件就会自动处理。
+隐藏消息通常来自 SillyTavern 的 Hide from prompt / 眼睛按钮，或等价的隐藏命令。只要消息在界面上带有隐藏状态，插件就会自动处理。
 
 折叠块默认是收起状态。点一下折叠块会展开里面的隐藏楼层，再点一下会重新折叠。
 
@@ -146,9 +146,9 @@ SillyTavern/public/scripts/extensions/third-party/ST-HiddenFloorCollapse
 
 折叠所有隐藏楼层折叠组。
 
-## Quick Reply示例
+## Quick Reply 示例
 
-你可以把这些命令做成Quick Reply按钮。
+你可以把这些命令做成 Quick Reply 按钮。
 
 重新扫描：
 
@@ -170,14 +170,14 @@ SillyTavern/public/scripts/extensions/third-party/ST-HiddenFloorCollapse
 
 ## 工作原理
 
-SillyTavern隐藏消息时，会在聊天界面上把对应消息标记为隐藏状态。本插件结合当前聊天数据和已加载的消息节点，寻找连续的隐藏消息，并在它们前面插入一个`<details>`折叠块。收起时清空消息的子节点，展开时调用酒馆原生接口恢复。
+SillyTavern 隐藏消息时，会在聊天界面上把对应消息标记为隐藏状态。本插件结合当前聊天数据和已加载的消息节点，寻找连续的隐藏消息，并在它们前面插入一个 `<details>` 折叠块。收起时清空消息的子节点，展开时调用酒馆原生接口恢复。
 
 插件只处理界面显示：
 
 * 不会删除消息
 * 不会修改消息内容
 * 不会取消隐藏状态
-* 不会把隐藏消息重新加入prompt
+* 不会把隐藏消息重新加入 prompt
 * 备注会保存到当前聊天的 metadata，聊天正文保持不变
 
 ## 说明
@@ -185,7 +185,7 @@ SillyTavern隐藏消息时，会在聊天界面上把对应消息标记为隐藏
 * 只有连续的隐藏消息会被合并成一组。
 * 中间隔着正常消息时，会分成多个折叠组。
 * 小型系统消息和工具调用消息会被跳过。
-* 折叠块使用SillyTavern主题色，并带有杂志风排版。
+* 折叠块会跟随 SillyTavern 主题的变化而变化。
 * 如果切换聊天、发送消息、编辑消息、删除消息或改变隐藏状态，插件会自动重新扫描。
 
 ## English
