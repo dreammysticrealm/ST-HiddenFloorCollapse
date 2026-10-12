@@ -6,7 +6,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "dreammysticrealm",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "homePage": "https://github.com/dreammysticrealm/ST-HiddenFloorCollapse",
   "hooks": {
     "activate": "init"

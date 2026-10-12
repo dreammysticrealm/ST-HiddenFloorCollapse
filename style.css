@@ -59,6 +59,9 @@
         );
 
     display: block;
+    /* #chat is a height-limited flex column. Keep the full card height even
+       when WebKit underestimates the automatic minimum size of <details>. */
+    flex: 0 0 auto;
     box-sizing: border-box;
     width: 25.5rem;
     max-width: calc(100% - 1rem);
