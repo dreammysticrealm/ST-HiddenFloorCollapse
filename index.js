@@ -18,8 +18,8 @@ const METADATA_KEY = 'hidden_floor_collapse';
 const METADATA_VERSION = 1;
 
 let observer = null;
+let observedChat = null;
 let scheduled = false;
-let suppressMutationObserver = false;
 let initialized = false;
 
 
@@ -401,6 +401,11 @@ function createDetailsForGroup(group, initiallyOpen = false) {
     const summary = document.createElement('summary');
     summary.className = 'st-hfc-summary';
 
+    // Keep <summary> as the native disclosure control and put Grid on a child
+    // to avoid older iOS WebKit layout quirks.
+    const layout = document.createElement('span');
+    layout.className = 'st-hfc-summary-layout';
+
     const kicker = document.createElement('span');
     kicker.className = 'st-hfc-kicker';
     kicker.textContent = 'Hidden sequence';
@@ -434,7 +439,7 @@ function createDetailsForGroup(group, initiallyOpen = false) {
         ? '点击以折叠'
         : '点击以展开';
 
-    summary.append(
+    layout.append(
         kicker,
         title,
         range,
@@ -444,6 +449,7 @@ function createDetailsForGroup(group, initiallyOpen = false) {
         hint,
     );
 
+    summary.append(layout);
     details.append(summary);
 
     details.addEventListener('toggle', () => {
@@ -558,41 +564,34 @@ function findHiddenGroups(chat) {
 /* ------------------------------------------------------------------------- */
 
 function applyHiddenFloorCollapse() {
+    setupMutationObserver();
     const chat = getChatElement();
 
     if (!chat) {
         return;
     }
 
-    suppressMutationObserver = true;
+    // Preserve manually opened cards while rebuilding.
+    const openGroupKeys = collectOpenGroupKeys(chat);
 
-    try {
-        // Preserve manually opened cards while rebuilding.
-        const openGroupKeys = collectOpenGroupKeys(chat);
+    cleanupExistingFolds(chat);
 
-        cleanupExistingFolds(chat);
+    const groups = findHiddenGroups(chat);
 
-        const groups = findHiddenGroups(chat);
+    for (const group of groups) {
+        const key = getGroupKey(group);
+        const initiallyOpen = key
+            ? openGroupKeys.has(key)
+            : false;
 
-        for (const group of groups) {
-            const key = getGroupKey(group);
-            const initiallyOpen = key
-                ? openGroupKeys.has(key)
-                : false;
+        const details = createDetailsForGroup(
+            group,
+            initiallyOpen,
+        );
 
-            const details = createDetailsForGroup(
-                group,
-                initiallyOpen,
-            );
+        group[0].before(details);
 
-            group[0].before(details);
-
-            syncGroupVisibility(details, group);
-        }
-    } finally {
-        requestAnimationFrame(() => {
-            suppressMutationObserver = false;
-        });
+        syncGroupVisibility(details, group);
     }
 }
 
@@ -625,21 +624,28 @@ function scheduleApply(reason = 'unknown') {
 function setupMutationObserver() {
     const chat = getChatElement();
 
-    if (!chat || observer) {
+    if (!chat || observedChat === chat) {
         return;
     }
 
-    observer = new MutationObserver((mutations) => {
-        if (suppressMutationObserver) {
-            return;
-        }
+    observer?.disconnect();
 
+    observer = new MutationObserver((mutations) => {
         // Never rebuild folds while SillyTavern is generating.
         if (document.body.dataset.generating === 'true') {
             return;
         }
 
         const relevant = mutations.some((mutation) => {
+            if (mutation.type === 'childList') {
+                // Mobile clients may populate #chat after the load event.
+                // Ignore only our own card insertions/removals, so an
+                // overlapping SillyTavern update is never discarded.
+                return mutation.target === chat
+                    && [...mutation.addedNodes, ...mutation.removedNodes]
+                        .some((node) => node instanceof Element && !isOurDetails(node));
+            }
+
             return mutation.type === 'attributes'
                 && mutation.attributeName === 'is_system'
                 && mutation.target instanceof HTMLElement
@@ -647,16 +653,18 @@ function setupMutationObserver() {
         });
 
         if (relevant) {
-            scheduleApply('is_system-changed');
+            scheduleApply('chat-dom-changed');
         }
     });
 
     observer.observe(chat, {
-        childList: false,
+        childList: true,
         subtree: true,
         attributes: true,
         attributeFilter: ['is_system'],
     });
+
+    observedChat = chat;
 }
 
 
@@ -746,6 +754,8 @@ export function init() {
         // These are included when available in the installed ST version.
         event_types.MESSAGE_DELETED,
         event_types.MESSAGE_EDITED,
+        event_types.GENERATION_ENDED,
+        event_types.GENERATION_STOPPED,
     ].filter(Boolean);
 
     for (const eventName of refreshEvents) {
