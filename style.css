@@ -12,6 +12,28 @@
     display: none !important;
 }
 
+/* ChatSurface owns the message/content nodes and measures each .mes. Keep
+   those nodes intact, with the fold card inside the first message of the run. */
+#chat > .mes.st-hfc-card-host.st-hfc-collapsed-message {
+    display: flex !important;
+    min-height: 0;
+    padding: 0;
+    margin: 0;
+    border: 0;
+    background: transparent;
+}
+
+#chat > .mes.st-hfc-card-host.st-hfc-collapsed-message > :not(.mes_block):not(.st-hfc-details),
+#chat > .mes.st-hfc-card-host.st-hfc-collapsed-message > .mes_block > :not(.st-hfc-details) {
+    display: none !important;
+}
+
+#chat > .mes.st-hfc-card-host.st-hfc-collapsed-message > .mes_block {
+    width: 100%;
+    padding: 0;
+    margin: 0;
+}
+
 #chat > .mes.st-hfc-grouped-message {
     border-left: 2px solid color-mix(
         in srgb,
@@ -28,7 +50,7 @@
 /* Fold card                                                                 */
 /* ------------------------------------------------------------------------- */
 
-#chat > details.st-hfc-details {
+#chat details.st-hfc-details {
     --st-hfc-ink:
         var(--SmartThemeBodyColor, currentColor);
 
@@ -114,7 +136,7 @@
 /* ------------------------------------------------------------------------- */
 
 #chat
-> details.st-hfc-details
+details.st-hfc-details
 > summary.st-hfc-summary {
     position: relative;
 
@@ -130,7 +152,7 @@
 }
 
 #chat
-> details.st-hfc-details
+details.st-hfc-details
 > summary.st-hfc-summary
 > .st-hfc-summary-layout {
     display: grid;
@@ -156,7 +178,7 @@
 }
 
 #chat
-> details.st-hfc-details
+details.st-hfc-details
 > summary.st-hfc-summary::-webkit-details-marker {
     display: none;
 }
@@ -167,7 +189,7 @@
 /* ------------------------------------------------------------------------- */
 
 #chat
-> details.st-hfc-details
+details.st-hfc-details
 > summary.st-hfc-summary::before {
     content: "▸";
 
@@ -192,7 +214,7 @@
 }
 
 #chat
-> details.st-hfc-details[open]
+details.st-hfc-details[open]
 > summary.st-hfc-summary::before {
     transform:
         translateY(-50%)
@@ -205,7 +227,7 @@
 /* ------------------------------------------------------------------------- */
 
 #chat
-> details.st-hfc-details
+details.st-hfc-details
 > summary.st-hfc-summary
 > .st-hfc-summary-layout::after {
     content: "";
@@ -546,7 +568,7 @@
         nowrap;
 }
 
-#chat > details.st-hfc-details[aria-busy="true"] .st-hfc-hint {
+#chat details.st-hfc-details[aria-busy="true"] .st-hfc-hint {
     color: var(--st-hfc-accent);
 }
 
@@ -555,13 +577,13 @@
 /* Open state                                                                */
 /* ------------------------------------------------------------------------- */
 
-#chat > details.st-hfc-details[open] {
+#chat details.st-hfc-details[open] {
     margin-bottom:
         0.45rem;
 }
 
 #chat
-> details.st-hfc-details[open]
+details.st-hfc-details[open]
 + .mes.st-hfc-grouped-message {
     margin-top:
         0.35rem;
@@ -575,7 +597,7 @@
 @media (max-width: 600px) {
 
     #chat
-    > details.st-hfc-details
+    details.st-hfc-details
     > summary.st-hfc-summary
     > .st-hfc-summary-layout {
         grid-template-columns:
@@ -594,7 +616,7 @@
     }
 
     #chat
-    > details.st-hfc-details
+    details.st-hfc-details
     > summary.st-hfc-summary {
         padding-right:
             0.75rem;

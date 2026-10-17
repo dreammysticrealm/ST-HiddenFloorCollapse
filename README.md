@@ -28,7 +28,19 @@
 
 点一下折叠块会展开这些隐藏楼层，再点一下会重新折叠。原消息不会被删除，也不会被取消隐藏。本扩展只改变聊天界面的显示方式。
 
-## 1.1.0：按需恢复隐藏楼层
+## 1.1.1：适配 TauriTavern ChatSurface
+
+* 修复 TauriTavern 2.3.0 中收起隐藏楼层后，发送、编辑和删除消息触发 ChatSurface 节点所有权错误的问题。
+* TauriTavern 的静态模式和虚拟化模式均保留消息根节点及正文 DOM，仅通过样式折叠；卡片放在消息内部，避免破坏宿主的聊天结构。
+* 开启虚拟化时通过 ChatSurface participant 接收挂载、内容更新和卸载通知，卸载时同步清理插件观察器和卡片。消息 DOM 的释放由 TauriTavern 负责。
+* 折叠卡片只代表宿主当前挂载的连续楼层。滚动后显示范围可能变化；同一隐藏序列的不同片段共享展开状态和备注。
+* 普通 SillyTavern 继续使用 1.1.0 的按需恢复逻辑。
+
+使用 TauriTavern 2.3.0 原始 ChatSurface 核心模块，在 Chromium 和 WebKit 移动视口中验证发送、编辑保存/取消、删除重编号、挂载/卸载和聊天切换。尚未进行 iOS 真机验证，测试范围和运行方式见 [tests/README.md](tests/README.md)。
+
+更新扩展后请**完全重启 TauriTavern**，让新增的启动 hook 生效，并清除旧版已经触发的 ChatSurface 故障状态。手动更新请替换整个扩展文件夹，包含 `manifest.json`。
+
+## 1.1.0：按需恢复隐藏楼层（普通 SillyTavern）
 
 * 收起时释放隐藏楼层的正文、图片和控件 DOM；展开时根据当前聊天数据重新渲染，分批完成。
 * 尊重酒馆的消息加载范围。折叠组可直接展开当前已加载的部分，不会自动触发 Show more messages。
@@ -170,7 +182,7 @@ SillyTavern/public/scripts/extensions/third-party/ST-HiddenFloorCollapse
 
 ## 工作原理
 
-SillyTavern 隐藏消息时，会在聊天界面上把对应消息标记为隐藏状态。本插件结合当前聊天数据和已加载的消息节点，寻找连续的隐藏消息，并在它们前面插入一个 `<details>` 折叠块。收起时清空消息的子节点，展开时调用酒馆原生接口恢复。
+SillyTavern 隐藏消息时，会在聊天界面上把对应消息标记为隐藏状态。本插件结合当前聊天数据和已加载的消息节点，寻找连续的隐藏消息。普通 SillyTavern 中，在它们前面插入 `<details>` 折叠块，收起时清空消息的子节点，展开时调用酒馆原生接口恢复。TauriTavern 中，卡片放在首条消息内部，仅调整显示样式，保留宿主管理的消息结构和正文节点。
 
 插件只处理界面显示：
 
@@ -216,7 +228,19 @@ It becomes:
 
 Click the fold card once to expand the hidden messages. Click it again to collapse them. The original messages are not deleted, edited, or unhidden. This extension only changes how hidden messages are displayed in the chat UI.
 
-## 1.1.0: Restore hidden messages on demand
+## 1.1.1: TauriTavern ChatSurface compatibility
+
+* Fixes ChatSurface ownership faults after collapsing hidden messages in TauriTavern 2.3.0, affecting sending, editing, and deleting messages.
+* Both static and virtualized TauriTavern modes retain the original message and content DOM. Folding uses CSS, with the card inside the first message.
+* Managed mode registers a ChatSurface participant before the first projection, follows mount/content lifetimes, and synchronously cleans up observers and cards on unmount. TauriTavern remains responsible for releasing message DOM.
+* Each card covers the currently mounted consecutive portion. Its range may change while scrolling; separate portions of the same hidden run share notes and open state.
+* Upstream SillyTavern keeps the existing on-demand restoration path.
+
+Validated against the original TauriTavern 2.3.0 ChatSurface core modules in Chromium and WebKit mobile viewports, covering send, edit/save/cancel, delete/reindex, cold remounts, and chat switching. This is not an iOS device test; see [tests/README.md](tests/README.md) for scope and reproduction steps.
+
+**Fully restart TauriTavern after updating** to activate the new startup hook and clear any ChatSurface epoch already faulted by the old extension. Manual updates must include `manifest.json`; replace the entire extension folder.
+
+## 1.1.0: Restore hidden messages on demand (upstream SillyTavern)
 
 * Collapsing releases the hidden messages' text, image, and control DOM. Expanding rebuilds them from current chat data in small batches.
 * Fold cards open the currently loaded portion directly, respecting SillyTavern's message window. They never trigger Show more messages automatically.
@@ -358,7 +382,7 @@ Close all folds:
 
 ## How it works
 
-When SillyTavern hides a message, the message is marked as hidden in the chat UI. This extension combines current chat data with the loaded message nodes, finds consecutive hidden messages, and inserts a `<details>` fold card before each group. Collapsing empties message children; expanding restores them with the native renderer.
+When SillyTavern hides a message, the message is marked as hidden in the chat UI. This extension combines current chat data with loaded message nodes to find consecutive hidden messages. In upstream SillyTavern, a `<details>` card precedes each group, collapsing empties message children, and expanding restores them with the native renderer. In TauriTavern, the card sits inside the first message and folding only changes presentation, preserving the host's message structure and content nodes.
 
 This extension only changes display behavior:
 
