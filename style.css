@@ -23,15 +23,8 @@
     background: transparent;
 }
 
-#chat > .mes.st-hfc-card-host.st-hfc-collapsed-message > :not(.mes_block):not(.st-hfc-details),
-#chat > .mes.st-hfc-card-host.st-hfc-collapsed-message > .mes_block > :not(.st-hfc-details) {
+#chat > .mes.st-hfc-card-host.st-hfc-collapsed-message > :not(.st-hfc-details) {
     display: none !important;
-}
-
-#chat > .mes.st-hfc-card-host.st-hfc-collapsed-message > .mes_block {
-    width: 100%;
-    padding: 0;
-    margin: 0;
 }
 
 #chat > .mes.st-hfc-grouped-message {
@@ -43,6 +36,52 @@
 
     margin-left: 0.35rem;
     padding-left: 0.35rem;
+}
+
+/* The card occupies its own full-width row in BOTH states. Keep the native
+   avatar and .mes_block as siblings in row two; ChatSurface retains the same
+   message, content and content-parent nodes and can measure the entire row.
+   The outer tracks reproduce the grouped-message inset and native right pad. */
+#chat > .mes.st-hfc-card-host {
+    display: grid;
+    grid-template-columns: calc(0.7rem + 2px) auto auto minmax(0, 1fr) 10px;
+    padding: 0;
+    margin-left: 0;
+    border-left: 0;
+}
+
+#chat > .mes.st-hfc-card-host > .st-hfc-details {
+    grid-area: 1 / 1 / 2 / -1;
+}
+
+#chat > .mes.st-hfc-card-host > .mesAvatarWrapper {
+    grid-area: 2 / 3;
+    margin-top: 10px;
+}
+
+#chat > .mes.st-hfc-card-host > .mes_block {
+    grid-area: 2 / 4;
+    min-width: 0;
+    margin-top: 10px;
+}
+
+#chat > .mes.st-hfc-card-host > .for_checkbox,
+#chat > .mes.st-hfc-card-host > .del_checkbox {
+    grid-area: 2 / 2;
+}
+
+/* Start the group marker below the card, beside the actual message. */
+#chat > .mes.st-hfc-card-host:not(.st-hfc-collapsed-message)::before {
+    content: '';
+    grid-area: 2 / 1;
+    align-self: stretch;
+    margin-left: 0.35rem;
+    border-left: 2px solid color-mix(
+        in srgb,
+        var(--SmartThemeQuoteColor, currentColor) 55%,
+        transparent
+    );
+    pointer-events: none;
 }
 
 

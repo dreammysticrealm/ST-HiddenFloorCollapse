@@ -808,7 +808,9 @@ function applyHiddenFloorCollapse() {
             if (preserveMessageDom) {
                 // Bounded ChatSurface forbids additional #chat children. Keep
                 // our UI inside the first message, outside its managed content.
-                const container = group[0].querySelector('.mes_block') || group[0];
+                // A direct child can span the avatar and text columns when
+                // expanded, without moving any host-owned message children.
+                const container = group[0];
                 if (state.details.parentElement !== container) container.prepend(state.details);
                 group[0].classList.add(CARD_HOST_CLASS);
             } else if (state.details.nextElementSibling !== group[0]) group[0].before(state.details);

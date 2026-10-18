@@ -28,6 +28,15 @@
 
 点一下折叠块会展开这些隐藏楼层，再点一下会重新折叠。原消息不会被删除，也不会被取消隐藏。本扩展只改变聊天界面的显示方式。
 
+## 1.1.2：修复 TauriTavern 展开布局
+
+* 修复展开后卡片挤进首条消息正文列、头像出现在卡片旁边的问题。
+* 展开与收起时卡片均独立居中，宽度及横向位置保持一致；展开后的头像、名字和正文从下一行开始，分组线从消息处开始。
+* 保留 ChatSurface 管理的消息节点、正文节点及其父节点，仅移动插件自己的卡片。
+* 使用 TauriTavern 2.3.0 原始样式及 ChatSurface 模块，在 Chromium / WebKit 的手机与桌面视口验证布局和聊天操作。尚未进行 iOS 真机验证。
+
+更新扩展后请**完全重启 TauriTavern**，以同时加载新版脚本和样式。
+
 ## 1.1.1：适配 TauriTavern ChatSurface
 
 * 修复 TauriTavern 2.3.0 中收起隐藏楼层后，发送、编辑和删除消息触发 ChatSurface 节点所有权错误的问题。
@@ -227,6 +236,15 @@ It becomes:
 ```
 
 Click the fold card once to expand the hidden messages. Click it again to collapse them. The original messages are not deleted, edited, or unhidden. This extension only changes how hidden messages are displayed in the chat UI.
+
+## 1.1.2: TauriTavern expanded layout fix
+
+* Fixes the expanded card appearing in the first message's text column with the avatar beside it.
+* The card stays centered at the same width and horizontal position when opened or closed. The avatar, author, and text start on the next row, with the group marker beside the messages.
+* Preserves ChatSurface's message, content, and content-parent nodes; only the extension's own card moves.
+* Layout and chat operations verified with the original TauriTavern 2.3.0 stylesheet and ChatSurface modules in Chromium / WebKit at mobile and desktop sizes. This is not an iOS device test.
+
+**Fully restart TauriTavern after updating** to load both the updated script and stylesheet.
 
 ## 1.1.1: TauriTavern ChatSurface compatibility
 

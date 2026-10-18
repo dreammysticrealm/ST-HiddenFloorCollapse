@@ -6,7 +6,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "dreammysticrealm",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "minimum_client_version": "1.14.0",
   "homePage": "https://github.com/dreammysticrealm/ST-HiddenFloorCollapse",
   "hooks": {
