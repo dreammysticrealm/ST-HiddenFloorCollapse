@@ -213,7 +213,70 @@ async function run(page, origin, mode, engine) {
     assert.equal(await page.locator('.st-hfc-details').count(), 1);
     assert.equal(await page.evaluate(() => controller.getFault()?.message || null), null);
     await page.evaluate(() => syncLayout());
+    if (mode === 'static') await checkTabletLayout(page, engine);
     assert.deepEqual(errors, []);
+}
+
+async function checkTabletLayout(page, engine) {
+    // Reported on iPadOS 18 beta with virtualization OFF: long hidden messages
+    // at the start of the chat, followed by one normal message.
+    await page.evaluate(async () => {
+        await switchChat(3, [0, 1], [0, 1, 2]);
+        for (let id = 0; id < 3; id++) {
+            const text = ('A quiet room opens onto the garden. The conversation continues beside the window, as the evening light moves across the table. ').repeat(5);
+            context.chat[id].mes = text;
+            updateContent(id, text);
+        }
+        controller.getMessageElement(2).classList.add('last_mes');
+        window.tabletNativeNodes = Array.from(document.querySelectorAll('#chat > .mes')).map(root => ({
+            root, content: root.querySelector('.mes_text'), parent: root.querySelector('.mes_text').parentElement,
+        }));
+        await settle();
+    });
+    for (const viewport of [{ width: 834, height: 1194 }, { width: 1194, height: 834 }]) {
+        await page.setViewportSize(viewport);
+        for (const open of [false, true, false, true, false]) {
+            await page.evaluate(async open => { commands[open ? 'hfc-open' : 'hfc-close'](); await settle(); }, open);
+            // Capture before geometry reads: forcing a layout flush can mask
+            // WebKit's stale-layout symptoms. This still isn't an iOS device.
+            if (process.env.HFC_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.HFC_SCREENSHOT_DIR, `tablet-${engine}-${viewport.width}-${open ? 'open' : 'closed'}.png`) });
+            const geometry = await page.evaluate(() => {
+                const host = controller.getMessageElement(0);
+                const normal = controller.getMessageElement(2);
+                const rect = el => el.getBoundingClientRect().toJSON();
+                return {
+                    host: rect(host), card: rect(host.querySelector('.st-hfc-details')),
+                    author: rect(host.querySelector('.ch_name')), content: rect(host.querySelector('.mes_block')),
+                    normal: rect(normal), next: rect(controller.getMessageElement(1)),
+                    visibility: getComputedStyle(host).contentVisibility,
+                    intrinsic: getComputedStyle(host).containIntrinsicBlockSize,
+                    native: tabletNativeNodes.every(({ root, content, parent }) => root.isConnected && root.querySelector('.mes_text') === content && content.parentElement === parent),
+                };
+            });
+            assert.equal(geometry.visibility, 'visible', 'Folded groups must bypass WebKit auto-containment');
+            assert.equal(geometry.intrinsic, 'none', 'Folded groups must not reuse cached intrinsic height');
+            assert(geometry.native, 'Toggling must preserve host content identity and parents');
+            if (open) {
+                assert(geometry.author.top >= geometry.card.bottom + 8, 'Card must reserve space above long messages');
+                assert(geometry.host.bottom >= geometry.content.bottom - 1, 'First message must contain its card and body');
+                assert(geometry.next.top >= geometry.host.bottom - 1, 'Following hidden message must not overlap');
+            } else {
+                assert.equal(geometry.next.height, 0, 'Collapsed hidden messages must not retain height');
+                assert(Math.abs(geometry.normal.top - geometry.host.bottom) <= 1, 'Normal message must follow the collapsed card without a blank gap');
+                assert(geometry.normal.top - geometry.card.bottom <= 20, 'Collapsed card must release expanded message height');
+            }
+        }
+    }
+    await page.evaluate(async () => {
+        for (let id = 0; id < 2; id++) {
+            context.chat[id].is_system = false;
+            controller.getMessageElement(id).setAttribute('is_system', 'false');
+        }
+        await eventSource.emit(event_types.MESSAGE_UPDATED);
+        await settle();
+    });
+    assert.equal(await page.locator('.st-hfc-card-slot, .st-hfc-preserved-message').count(), 0, 'Unhiding must remove compatibility overrides and card slots');
+    assert.equal(await page.evaluate(() => controller.getFault()?.message || null), null);
 }
 
 (async () => {

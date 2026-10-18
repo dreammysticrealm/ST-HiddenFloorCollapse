@@ -37,6 +37,13 @@ working delete-mode checkbox placement, and unchanged native node parents.
 The host's measured height must include both card and message content.
 Both browsers run mobile and desktop viewports, not on an iOS device.
 
+The static-mode tablet scenario also covers three long messages with the first
+two hidden, at 834x1194 and 1194x834. It checks repeated opening/closing, no
+overlap or retained blank gap, actual-height containment overrides, and cleanup
+after unhiding. Screenshots are captured before geometry reads because forced
+layout reads may hide stale-layout symptoms. The 1.1.3 run used WebKit 26.5;
+this does **not** reproduce or certify behavior on iPadOS 18 beta itself.
+
 To reproduce the 1.1.1 UI regression, point `HFC_EXTENSION_ROOT` at a 1.1.1
 checkout and run the current test normally (without `HFC_EXPECT_REGRESSION`).
 The expanded-card geometry assertion must fail.
