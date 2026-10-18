@@ -14,6 +14,8 @@ const GROUPED_CLASS = 'st-hfc-grouped-message';
 const COLLAPSED_CLASS = 'st-hfc-collapsed-message';
 const VIRTUAL_CLASS = 'st-hfc-virtual-message';
 const CARD_HOST_CLASS = 'st-hfc-card-host';
+const CARD_SLOT_CLASS = 'st-hfc-card-slot';
+const PRESERVED_CLASS = 'st-hfc-preserved-message';
 const { eventSource, event_types } = Tavern;
 const RENDER_BATCH_SIZE = 8;
 
@@ -51,9 +53,9 @@ function getChatElement() {
     return document.querySelector(CHAT_SELECTOR);
 }
 
-function isOurDetails(node) {
+function isOurNode(node) {
     return node instanceof HTMLElement
-        && node.classList.contains(DETAILS_CLASS);
+        && (node.classList.contains(DETAILS_CLASS) || node.classList.contains(CARD_SLOT_CLASS));
 }
 
 function isCollapsibleHiddenMessage(node) {
@@ -435,7 +437,14 @@ function createDetailsForGroup(group, key, cardId = key) {
     const details = document.createElement('details');
     details.className = DETAILS_CLASS;
     details.dataset.groupKey = key;
-    const state = { details, group, key, cardId, signature: '', expectedOpen: openKeys.has(key) };
+    // In TauriTavern, an ordinary block owns the card's row. Older WebKit
+    // must not derive message row heights from a <details> grid item.
+    const slot = preserveMessageDom ? document.createElement('div') : null;
+    if (slot) {
+        slot.className = CARD_SLOT_CLASS;
+        slot.append(details);
+    }
+    const state = { details, slot, group, key, cardId, signature: '', expectedOpen: openKeys.has(key) };
     details.open = state.expectedOpen;
     details.addEventListener('toggle', () => {
         if (!details.isConnected || cards.get(cardId) !== state || details.open === state.expectedOpen) return;
@@ -547,6 +556,7 @@ function resetSession(chat, context) {
 }
 
 function removeCard(state) {
+    state.slot?.remove();
     state.details.remove();
     const host = state.group[0];
     if (!host?.querySelector(`.${DETAILS_CLASS}`)) host?.classList.remove(CARD_HOST_CLASS);
@@ -561,7 +571,7 @@ function mountManagedMessage({ element }) {
         if (records.some(record => {
             if (record.type === 'attributes') return record.target === element;
             if (record.target.closest?.(`.${DETAILS_CLASS}`)) return false;
-            return [...record.addedNodes, ...record.removedNodes].some(node => !isOurDetails(node));
+            return [...record.addedNodes, ...record.removedNodes].some(node => !isOurNode(node));
         })) scheduleApply('managed-message-changed');
     });
     localObserver.observe(element, observerOptions);
@@ -569,7 +579,7 @@ function mountManagedMessage({ element }) {
     return () => {
         localObserver.disconnect();
         mountedMessages.delete(element);
-        element.classList.remove(GROUPED_CLASS, COLLAPSED_CLASS, CARD_HOST_CLASS);
+        element.classList.remove(GROUPED_CLASS, COLLAPSED_CLASS, CARD_HOST_CLASS, PRESERVED_CLASS);
         for (const [cardId, state] of cards) {
             if (!state.group.includes(element)) continue;
             removeCard(state);
@@ -701,7 +711,7 @@ function findHiddenGroups(chat) {
     const groups = [];
     let current = [];
     for (const node of Array.from(chat.children)) {
-        if (isOurDetails(node)) continue;
+        if (isOurNode(node)) continue;
         const id = node instanceof HTMLElement ? getMessageId(node) : null;
         const message = id === null ? null : session.messages[id];
         if (message && (!managedOwnership || mountedMessages.has(node)) && isCollapsibleHiddenMessage(node)) {
@@ -756,7 +766,7 @@ function applyHiddenFloorCollapse() {
     }
     mutateDom(() => {
         for (const node of nodes) {
-            node.classList.remove(GROUPED_CLASS, COLLAPSED_CLASS, CARD_HOST_CLASS);
+            node.classList.remove(GROUPED_CLASS, COLLAPSED_CLASS, CARD_HOST_CLASS, PRESERVED_CLASS);
             // Metadata or chat-array replacement can start a new session
             // while the existing loaded DOM is retained.
             if (!preserveMessageDom && node.classList.contains(VIRTUAL_CLASS)) {
@@ -797,6 +807,7 @@ function applyHiddenFloorCollapse() {
             for (const node of group) {
                 const id = getMessageId(node);
                 node.classList.add(GROUPED_CLASS);
+                node.classList.toggle(PRESERVED_CLASS, preserveMessageDom);
                 node.classList.toggle(COLLAPSED_CLASS, !isOpen);
                 if (isOpen) {
                     if (virtualMessages.has(node)) queueRestore(node, context.chat[id]);
@@ -808,10 +819,10 @@ function applyHiddenFloorCollapse() {
             if (preserveMessageDom) {
                 // Bounded ChatSurface forbids additional #chat children. Keep
                 // our UI inside the first message, outside its managed content.
-                // A direct child can span the avatar and text columns when
-                // expanded, without moving any host-owned message children.
+                // The block slot spans the message width without moving any
+                // host-owned children or relying on <details> grid sizing.
                 const container = group[0];
-                if (state.details.parentElement !== container) container.prepend(state.details);
+                if (state.slot.parentElement !== container) container.prepend(state.slot);
                 group[0].classList.add(CARD_HOST_CLASS);
             } else if (state.details.nextElementSibling !== group[0]) group[0].before(state.details);
         }
@@ -853,7 +864,7 @@ function handleMutations(mutations) {
         if (mutation.type === 'attributes') return mutation.target.classList?.contains('mes');
         if (mutation.target === observedChat) {
             return [...mutation.addedNodes, ...mutation.removedNodes]
-                .some(node => node instanceof Element && !isOurDetails(node));
+                .some(node => node instanceof Element && !isOurNode(node));
         }
         // If another extension writes content into an empty placeholder, empty
         // it again while closed, or rebuild it from current data while open.

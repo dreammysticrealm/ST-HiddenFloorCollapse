@@ -28,6 +28,17 @@
 
 点一下折叠块会展开这些隐藏楼层，再点一下会重新折叠。原消息不会被删除，也不会被取消隐藏。本扩展只改变聊天界面的显示方式。
 
+## 1.1.3：iPadOS 18 beta 布局兼容处理
+
+针对关闭聊天虚拟化时，iPadOS 18 beta 上展开重叠、收起留白的反馈：
+
+* 折叠卡片改由普通块元素占位，消息使用换行 flex 布局，不再让 `<details>` 直接参与消息根节点的 grid 高度计算。
+* 仅对 TauriTavern 的折叠组关闭 `content-visibility: auto` 和固有高度缓存，使展开/收起使用实际高度；取消隐藏后恢复宿主样式。
+* 保留原消息、正文及其父节点，继续遵守 ChatSurface 节点所有权要求。
+* 补充平板横竖屏、长消息、连续展开/收起、空白间距及清理检查。Chromium 和 WebKit 26.5 测试通过，**尚未在 iPadOS 18 beta 真机验证**。
+
+这是插件端的兼容处理。Safari 18 beta 有相关的 [details / content-visibility 问题记录](https://bugs.webkit.org/show_bug.cgi?id=277573)，但该记录本身不能证明用户反馈的根因。更新后请完全重启 TauriTavern。
+
 ## 1.1.2：修复 TauriTavern 展开布局
 
 * 修复展开后卡片挤进首条消息正文列、头像出现在卡片旁边的问题。
@@ -236,6 +247,17 @@ It becomes:
 ```
 
 Click the fold card once to expand the hidden messages. Click it again to collapse them. The original messages are not deleted, edited, or unhidden. This extension only changes how hidden messages are displayed in the chat UI.
+
+## 1.1.3: iPadOS 18 beta layout compatibility
+
+Addresses reports of overlap when opening and blank space when closing on iPadOS 18 beta with chat virtualization disabled:
+
+* A normal block reserves the card row, with wrapping flex layout for the message. The native `<details>` no longer participates directly in a message-root grid track.
+* TauriTavern fold groups bypass `content-visibility: auto` and remembered intrinsic sizing, using actual content height. Unhiding restores host styling.
+* Native message, content, and content-parent nodes remain intact for ChatSurface.
+* Added tablet portrait/landscape, long-message, repeated toggle, gap, and cleanup checks. Passed Chromium and WebKit 26.5; **not yet verified on an iPadOS 18 beta device**.
+
+This is an extension-side compatibility workaround. Safari 18 beta has a related [details / content-visibility bug report](https://bugs.webkit.org/show_bug.cgi?id=277573); that report alone does not establish the cause of this user's symptoms. Fully restart TauriTavern after updating.
 
 ## 1.1.2: TauriTavern expanded layout fix
 
