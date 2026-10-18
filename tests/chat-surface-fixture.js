@@ -41,10 +41,12 @@ function materializeMessage({ message, messageId }) {
     element.className = 'mes';
     element.setAttribute('mesid', String(messageId));
     element.setAttribute('is_system', String(message.is_system));
-    element.innerHTML = '<div class="mesAvatarWrapper">Avatar</div><div class="mes_block">'
+    element.innerHTML = '<div class="for_checkbox"></div><input type="checkbox" class="del_checkbox">'
+        + '<div class="mesAvatarWrapper"><div class="avatar fixture-avatar">T</div><div class="mesIDDisplay"></div></div>'
+        + '<div class="swipe_left"></div><div class="mes_block">'
         + '<div class="ch_name"><span class="name_text">Tester</span></div>'
-        + '<span class="mesIDDisplay"></span><div class="mes_text"></div>'
-        + '<button class="native-control">Native control</button></div>';
+        + '<div class="mes_text"></div>'
+        + '<button class="native-control">Native control</button></div><div class="swipeRightBlock"></div>';
     element.querySelector('.mes_text').textContent = message.mes;
     element.querySelector('button').addEventListener('click', () => nativeClicks++);
     return element;
@@ -105,5 +107,7 @@ controller.reconcile({ indices: [0, 1, 2, 3, 4, 5] });
 syncLayout();
 window.originalRoots = adapter.directMessages();
 window.originalContents = originalRoots.map(element => element.querySelector('.mes_text'));
+window.originalParents = originalContents.map(content => content.parentElement);
+window.originalChildren = originalRoots.map(element => Array.from(element.children));
 window.originalData = JSON.stringify(context.chat);
 window.ready = true;

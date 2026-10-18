@@ -11,9 +11,11 @@ assert(fs.existsSync(path.join(hostRoot, 'src/tauri/main/services/chat-surface/c
     'Set TAURITAVERN_SOURCE to a TauriTavern v2.3.0 checkout');
 
 const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<style>:root{--SmartThemeBodyColor:#ddd;--SmartThemeQuoteColor:#a78bfa;--SmartThemeBlurTintColor:#282828;font:16px Arial}
-*{box-sizing:border-box}body{background:#333;color:#ddd}#chat{display:flex;flex-direction:column;height:700px;overflow:auto}
-.mes{display:flex;flex-shrink:0;padding:10px;width:100%}.mes_block{flex:1;min-width:0}.mes_text{padding:10px}
+<link rel="stylesheet" href="/host/src/style.css">
+<style>:root{font:16px Arial;--mainFontSize:16px;--mainFontFamily:Arial}
+body{margin:0;background:#171717;height:100vh;overflow:hidden}main{width:100%}
+#chat{height:100vh;max-height:none;overflow:auto}.mes{flex-shrink:0}
+.fixture-avatar{background:#56506c;color:#ddd;display:grid;place-items:center;border-radius:50%}
 tt-chat-spacer{display:block;flex-shrink:0}</style><link rel="stylesheet" href="/extension/style.css"></head>
 <body><main><div id="chat"></div></main><script type="module" src="/fixture.js"></script></body></html>`;
 const server = http.createServer((request, response) => {
@@ -35,7 +37,64 @@ const server = http.createServer((request, response) => {
     response.writeHead(200, { 'Content-Type': type }); response.end(content);
 });
 
-async function run(page, origin, mode) {
+async function checkLayout(page, mode, engine) {
+    const card = page.locator('.st-hfc-details');
+    for (const width of [390, 1280]) {
+        await page.setViewportSize({ width, height: 844 });
+        await page.evaluate(() => settle());
+        const closed = await card.boundingBox();
+        assert(closed.width > 300, 'Collapsed card must keep its full width');
+        await page.locator('.st-hfc-summary').click();
+        await page.evaluate(() => settle());
+        const geometry = await page.evaluate(() => {
+            const host = controller.getMessageElement(1);
+            const rect = element => { const r = element.getBoundingClientRect(); return { x: r.x, y: r.y, width: r.width, bottom: r.bottom }; };
+            return {
+                card: rect(host.querySelector('.st-hfc-details')),
+                avatar: rect(host.querySelector('.mesAvatarWrapper')),
+                name: rect(host.querySelector('.ch_name')),
+                text: rect(host.querySelector('.mes_text')),
+                nextAvatar: rect(controller.getMessageElement(2).querySelector('.mesAvatarWrapper')),
+                nextText: rect(controller.getMessageElement(2).querySelector('.mes_text')),
+                chat: rect(document.querySelector('#chat')),
+                measured: host.getBoundingClientRect().height >= host.querySelector('.st-hfc-details').offsetHeight + host.querySelector('.mes_block').offsetHeight,
+                parents: originalContents.every((content, id) => content.parentElement === originalParents[id]),
+                children: originalChildren.every((children, id) => children.every(child => child.parentElement === originalRoots[id])),
+            };
+        });
+        assert(geometry.avatar.y >= geometry.card.bottom + 8, 'Expanded card must sit above the avatar');
+        assert(geometry.name.y >= geometry.card.bottom + 8, 'Expanded card must sit above the author and text');
+        assert(Math.abs(geometry.avatar.y - geometry.name.y) <= 1, 'Avatar and author must share the message row');
+        assert(Math.abs(geometry.card.x - closed.x) <= 1, 'Opening must not shift the card into the text column');
+        assert(Math.abs(geometry.card.width - closed.width) <= 1, 'Opening must not narrow the card');
+        assert(Math.abs(geometry.card.x + geometry.card.width / 2 - (geometry.chat.x + geometry.chat.width / 2)) <= 10, 'Card must be centered across the chat');
+        assert(Math.abs(geometry.avatar.x - geometry.nextAvatar.x) <= 1, 'First avatar must align with later messages');
+        assert(Math.abs(geometry.text.x - geometry.nextText.x) <= 1, 'First text must align with later messages');
+        assert(geometry.measured && geometry.parents && geometry.children, 'Host measurement and native node parents must remain intact');
+        if (process.env.HFC_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.HFC_SCREENSHOT_DIR, `chat-surface-${engine}-${mode}-${width}-open.png`) });
+        // Native delete-mode controls must stay in the message row as well.
+        await page.evaluate(() => {
+            const host = controller.getMessageElement(1);
+            host.querySelector('.for_checkbox').style.display = 'none';
+            host.querySelector('.del_checkbox').style.display = 'grid';
+        });
+        const checkbox = await page.locator('[mesid="1"] .del_checkbox').boundingBox();
+        const avatar = await page.locator('[mesid="1"] .mesAvatarWrapper').boundingBox();
+        assert(checkbox.y >= geometry.card.bottom && checkbox.x + checkbox.width <= avatar.x, 'Delete checkbox must precede the avatar below the card');
+        await page.evaluate(() => {
+            const host = controller.getMessageElement(1);
+            host.querySelector('.for_checkbox').style.display = '';
+            host.querySelector('.del_checkbox').style.display = '';
+        });
+        await page.locator('.st-hfc-summary').click();
+        await page.evaluate(() => settle());
+        assert(!await page.locator('[mesid="1"] .mesAvatarWrapper').isVisible());
+        if (process.env.HFC_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.HFC_SCREENSHOT_DIR, `chat-surface-${engine}-${mode}-${width}-closed.png`) });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+}
+
+async function run(page, origin, mode, engine) {
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
     await page.goto(`${origin}/?mode=${mode}`);
@@ -60,7 +119,7 @@ async function run(page, origin, mode) {
     assert.equal(await page.locator('.st-hfc-title').textContent(), '已隐藏3层');
     assert(await page.locator('.st-hfc-details').isVisible());
     assert(await page.locator('.st-hfc-details').evaluate(card => card.getBoundingClientRect().height >= card.querySelector('summary').getBoundingClientRect().height));
-    if (process.env.HFC_SCREENSHOT_DIR) await page.screenshot({ path: path.join(process.env.HFC_SCREENSHOT_DIR, `chat-surface-${mode}.png`) });
+    await checkLayout(page, mode, engine);
     assert(!await page.locator('[mesid="1"] .mes_text').isVisible());
     await page.locator('.st-hfc-summary').click();
     await page.evaluate(() => settle());
@@ -167,7 +226,7 @@ async function run(page, origin, mode) {
             try {
                 for (const mode of ['static', 'managed']) {
                     const page = await browser.newPage({ viewport: { width: 390, height: 844 }, hasTouch: true });
-                    try { await run(page, origin, mode); console.log(`PASS ${engine} ${mode}`); }
+                    try { await run(page, origin, mode, engine); console.log(`PASS ${engine} ${mode}: mobile/desktop layout and ChatSurface transactions`); }
                     finally { await page.close(); }
                 }
             } finally { await browser.close(); }
